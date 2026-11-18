@@ -1,0 +1,70 @@
+/* DeepSeek 网页版风格覆盖层：只改配色与品牌，不动布局 */
+:root {
+  --dsw-static-blue-500: #4d6bfe;
+  --dsw-static-blue-450: #3f5ce8;
+  --dsw-static-blue-400: #6b8bff;
+  --dsw-static-blue-300: #b4c4ff;
+  --dsw-static-blue-200: #d6e0ff;
+  --dsw-static-blue-100: #e8edff;
+  --dsw-static-blue-50: #f2f5ff;
+  --ds-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+}
+
+/* 侧栏底色贴近网页版 */
+.sider-ac14ac {
+  background-color: #f9fbff !important;
+}
+
+/* 品牌区：官方鲸鱼 logo + DeepSeek 字标 */
+.appName-ac14ac {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  color: #1f2329 !important;
+  padding-left: 2px !important;
+}
+.appName-ac14ac::before {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  background-image: url("logo.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+.appName-ac14ac::after {
+  content: "DeepSeek";
+  font: 600 17px/26px var(--ds-font-family);
+  letter-spacing: 0.2px;
+  color: #1f2329;
+}
+html.dark .appName-ac14ac::after,
+body.dark .appName-ac14ac::after {
+  color: #ecedf0;
+}
+
+/* 新对话按钮：网页版的浅底描边胶囊 */
+.newChat-ac14ac {
+  background: #ffffff !important;
+  border: 1px solid rgba(77, 107, 254, 0.14) !important;
+  color: #1f2329 !important;
+  border-radius: 10px !important;
+  box-shadow: 0 1px 2px rgba(38, 49, 72, 0.04) !important;
+}
+.newChat-ac14ac:hover {
+  background: #f4f6ff !important;
+}
+
+/* 输入框与欢迎语微调，贴近网页版留白 */
+.textareaWrapper-ed6f47 textarea,
+.textarea-ed6f47 {
+  font-family: var(--ds-font-family);
+}
+.greeting-_1f155 {
+  color: #1f2329;
+}

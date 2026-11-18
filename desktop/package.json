@@ -1,0 +1,14 @@
+{
+  "name": "deepseek-chat-desktop",
+  "productName": "DeepSeek Chat",
+  "version": "0.1.1",
+  "private": true,
+  "description": "DeepSeek Chat desktop client (Electron shell over the official chat-demo)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  }
+}
