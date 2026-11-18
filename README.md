@@ -32,7 +32,7 @@ chat-demo 本身是一个纯静态的 React 应用，浏览器里直连 `https:/
 
 从 [Releases](../../releases) 页面下载 `DeepSeek-Chat-Setup-x.y.z.exe`，双击安装。
 
-> 请注意版本号，原则上是一定要用最新的版本
+> 请注意版本号，原则上是一定要用最新的版本，以防止一些奇奇怪怪的bug，记得及时更新到最新版本
 
 安装包**没有数字签名**，Windows SmartScreen 可能提示"已保护你的电脑"，点「更多信息 → 仍要运行」即可。
 
