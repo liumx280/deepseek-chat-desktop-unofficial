@@ -1,0 +1,2 @@
+/* ---------- Android 版：安全区适配（「关于」入口由共享的 about.js 注入到设置弹窗里） ---------- */
+body { padding-bottom: env(safe-area-inset-bottom); }

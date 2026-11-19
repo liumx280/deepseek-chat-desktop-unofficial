@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron')
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -53,6 +53,14 @@ const ICON_PATH = path.join(__dirname, 'build', 'icon.ico')
 
 let server = null
 
+// 固定端口：浏览器存储（localStorage / IndexedDB）按「源」隔离，而源里包含端口号。
+// 端口一变就等于换了一个网站，重启后 API Key 与聊天记录会全部“消失”。
+// 所以必须在每次启动时用同一个端口；只有被别的程序占用时才顺延。
+const PREFERRED_PORT = Number(process.env.DEEPSEEK_CHAT_PORT || 17890)
+// 端口固定：浏览器存储按「源」隔离，端口一变旧数据就读不到，所以宁可等也不换端口
+const PORT_WAIT_TRIES = 3
+const PORT_WAIT_MS = 4000
+
 // 本机静态服务：保留正常的 http(s) 源，浏览器存储、ServiceWorker 与语音权限都按普通站点处理
 function startServer() {
   return new Promise((resolve, reject) => {
@@ -77,12 +85,27 @@ function startServer() {
         res.writeHead(500).end(String(e))
       }
     })
-    server.on('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const port = server.address().port
-      boot('static server on http://127.0.0.1:' + port)
-      resolve(port)
-    })
+    let attempt = 0
+    const tryListen = () => {
+      server.once('error', (err) => {
+        if (err && err.code === 'EADDRINUSE') {
+          attempt++
+          if (attempt <= PORT_WAIT_TRIES) {
+            boot('port ' + PREFERRED_PORT + ' busy (attempt ' + attempt + '), retry in ' + PORT_WAIT_MS + 'ms')
+            setTimeout(tryListen, PORT_WAIT_MS)
+            return
+          }
+          reject(new Error('PORT_IN_USE'))
+          return
+        }
+        reject(err)
+      })
+      server.listen(PREFERRED_PORT, '127.0.0.1', () => {
+        boot('static server on http://127.0.0.1:' + PREFERRED_PORT + ' (stable origin)')
+        resolve(PREFERRED_PORT)
+      })
+    }
+    tryListen()
   })
 }
 
@@ -122,8 +145,11 @@ async function createWindow() {
     backgroundColor: '#ffffff',
     title: 'DeepSeek',
     icon: fs.existsSync(ICON_PATH) ? ICON_PATH : undefined,
+    // 菜单栏默认收起（Alt 呼出）：关于/数据目录已放进应用内的「设置 → 关于」，
+    // 顶部的原生菜单行和标题栏、侧栏品牌叠在一起会显得杂乱。
     autoHideMenuBar: true,
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -152,8 +178,33 @@ async function createWindow() {
       if (/^https?:/i.test(url)) shell.openExternal(url)
     }
   })
-  win.webContents.on('did-fail-load', (_e, code, desc, url) => boot('did-fail-load ' + code + ' ' + desc + ' ' + url))
-  win.webContents.on('render-process-gone', (_e, d) => boot('render-process-gone ' + JSON.stringify(d)))
+  // 崩溃 / 加载失败自动重载（最多两次），避免停在白屏
+  let recoveries = 0
+  const recover = (reason) => {
+    if (!win || win.isDestroyed() || recoveries >= 2) {
+      boot('recover skipped ' + reason + ' used=' + recoveries)
+      return
+    }
+    recoveries++
+    boot('recover #' + recoveries + ' ' + reason)
+    setTimeout(() => {
+      try {
+        win.webContents.reload()
+      } catch (e) {
+        boot('reload failed ' + e.message)
+      }
+    }, 800)
+  }
+  win.webContents.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
+    boot('did-fail-load ' + code + ' ' + desc + ' ' + url + ' main=' + isMainFrame)
+    if (isMainFrame && code !== -3) recover('load ' + code)
+  })
+  win.webContents.on('render-process-gone', (_e, d) => {
+    boot('render-process-gone ' + JSON.stringify(d))
+    recover('renderer ' + d.reason)
+  })
+  win.webContents.on('unresponsive', () => boot('unresponsive'))
+  win.webContents.on('responsive', () => boot('responsive'))
   win.webContents.on('console-message', (_e, level, message) => {
     if (level >= 2) boot('renderer-console ' + message)
   })
@@ -168,7 +219,25 @@ async function createWindow() {
     boot('window closed')
   })
 
-  const port = await startServer()
+  let port
+  try {
+    port = await startServer()
+  } catch (e) {
+    boot('startServer failed ' + ((e && e.message) || e))
+    if (e && e.message === 'PORT_IN_USE') {
+      dialog.showErrorBox(
+        '端口被占用',
+        'DeepSeek Chat 需要固定使用 127.0.0.1:' +
+          PREFERRED_PORT +
+          ' 来保存你的设置和聊天记录。\n\n' +
+          '这个端口现在被别的程序占着。请关掉占用它的程序（通常是上一次没退干净的 DeepSeek Chat）后重新打开本应用。',
+      )
+    } else {
+      dialog.showErrorBox('启动失败', String((e && e.stack) || e))
+    }
+    app.quit()
+    return
+  }
   boot('loadURL http://127.0.0.1:' + port + '/')
   await win.loadURL('http://127.0.0.1:' + port + '/')
   boot('loadURL done, visible=' + win.isVisible())
@@ -176,6 +245,38 @@ async function createWindow() {
     // 某些环境 ready-to-show 不触发，兜底显示
     win.show()
     boot('forced show()')
+  }
+
+  // 数据迁移用：--dump-storage=<json> 导出本源的 localStorage，--load-storage=<json> 写回
+  const dumpStoreArg = process.argv.find((a) => a.startsWith('--dump-storage='))
+  const loadStoreArg = process.argv.find((a) => a.startsWith('--load-storage='))
+  if (dumpStoreArg) {
+    await new Promise((r) => setTimeout(r, 1800))
+    const data = await win.webContents
+      .executeJavaScript('JSON.stringify(Object.fromEntries(Object.entries(localStorage)))')
+      .catch((e) => JSON.stringify({ __error: String(e) }))
+    fs.writeFileSync(dumpStoreArg.slice('--dump-storage='.length), data)
+    boot('storage dumped ' + data.length + ' bytes from port ' + port)
+    app.quit()
+    return
+  }
+  if (loadStoreArg) {
+    await new Promise((r) => setTimeout(r, 1200))
+    try {
+      const raw = fs.readFileSync(loadStoreArg.slice('--load-storage='.length), 'utf8').replace(/^\uFEFF/, '')
+      const json = JSON.parse(raw)
+      const entries = JSON.stringify(Object.entries(json))
+      const n = await win.webContents.executeJavaScript(
+        '(() => { const e = ' + entries + '; let n = 0; for (const [k, v] of e) { try { localStorage.setItem(k, v); n++ } catch (err) {} } return n })()',
+      )
+      boot('storage imported ' + n + ' keys into port ' + port)
+      // 等 Chromium 把 localStorage 落盘，避免退出太快丢写入
+      await new Promise((r) => setTimeout(r, 2500))
+    } catch (e) {
+      boot('storage import failed ' + e.message)
+    }
+    app.quit()
+    return
   }
 
   // 开发用：--shot=<png> 截图、--dump=<html> 导出 DOM，做完退出
@@ -232,6 +333,12 @@ async function createWindow() {
   }
 }
 
+// 便携版（解压即用）用自己目录存数据，避免和安装版互相覆盖
+if (process.env.PORTABLE_EXECUTABLE_DIR && !process.env.DEEPSEEK_CHAT_SHARED_DATA) {
+  app.setPath('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'DeepSeekChat-data'))
+  boot('portable userData -> ' + app.getPath('userData'))
+}
+
 if (!app.requestSingleInstanceLock()) {
   boot('single instance lock NOT acquired -> quit')
   app.quit()
@@ -254,6 +361,18 @@ if (!app.requestSingleInstanceLock()) {
       app.quit()
       return
     }
+    // 「关于」面板（web-overlay/about.js）通过这几个通道读取本机信息
+    ipcMain.on('dsh:version', (e) => { e.returnValue = app.getVersion() })
+    ipcMain.on('dsh:runtime', (e) => {
+      e.returnValue = 'Electron ' + process.versions.electron + ' · Chromium ' + process.versions.chrome
+    })
+    ipcMain.on('dsh:datadir', (e) => { e.returnValue = app.getPath('userData') })
+    ipcMain.on('dsh:open-data', () => shell.openPath(app.getPath('userData')))
+    ipcMain.on('dsh:open-log', () => shell.showItemInFolder(BOOT))
+    ipcMain.on('dsh:open-external', (_e, url) => {
+      if (/^https?:/i.test(String(url))) shell.openExternal(String(url))
+    })
+
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       {
         label: '视图',
@@ -279,6 +398,33 @@ if (!app.requestSingleInstanceLock()) {
           { role: 'copy', label: '复制' },
           { role: 'paste', label: '粘贴' },
           { role: 'selectAll', label: '全选' },
+        ],
+      },
+      {
+        label: '帮助',
+        submenu: [
+          {
+            label: '关于 DeepSeek Chat',
+            click: () => {
+              dialog.showMessageBox(win, {
+                type: 'info',
+                title: '关于',
+                message: 'DeepSeek Chat ' + app.getVersion(),
+                detail: [
+                  'Electron ' + process.versions.electron + ' / Chromium ' + process.versions.chrome,
+                  '',
+                  '数据目录：' + app.getPath('userData'),
+                  '启动日志：' + BOOT,
+                  '',
+                  '非官方封装：本应用把 deepseek-ai/chat-demo 装进桌面外壳，调用官方 API，需要你自己的 API Key。',
+                ].join('\n'),
+                buttons: ['好'],
+                noLink: true,
+              })
+            },
+          },
+          { label: '打开数据文件夹', click: () => shell.openPath(app.getPath('userData')) },
+          { label: '查看启动日志', click: () => shell.showItemInFolder(BOOT) },
         ],
       },
     ]))

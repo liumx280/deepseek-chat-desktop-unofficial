@@ -1,11 +1,13 @@
 # DeepSeek Chat Desktop（非官方）
 
-> **非官方项目**：这是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 Windows 桌面封装，与 DeepSeek 官方无关。
-> 官方从未发布过桌面客户端，本项目只是把官方的静态示例套进了 Electron 外壳。
+> **非官方项目**：这是 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) 的 Windows 桌面 / Android 封装，与 DeepSeek 官方无关。
+> 官方从未发布过桌面客户端或安卓 App，本项目只是把官方的静态示例套进了 Electron / WebView 外壳。
 
-把 DeepSeek 官方的 `chat-demo` 打成一个可以双击运行的 Windows 客户端：不用开浏览器、不用起本地服务、有独立窗口和图标、聊天记录保存在本机。
+把 DeepSeek 官方的 `chat-demo` 打成一个可以双击运行的 Windows 客户端，外加一个能装在手机上的 Android 版：不用开浏览器、不用起本地服务、有独立窗口和图标、聊天记录保存在本机。
 
 ![screenshot](docs/screenshot.png)
+
+![设置 - 关于](docs/about.png)
 
 ## 这是什么
 
@@ -22,6 +24,7 @@ chat-demo 本身是一个纯静态的 React 应用，浏览器里直连 `https:/
 ## 特性
 
 - 🖥 原生窗口，支持窗口位置/大小记忆、单实例运行
+- ⓘ 「设置 → 关于」里能看到版本、运行环境、数据目录与日志位置（桌面版可直接打开数据文件夹）
 - 🔒 全部数据本地：API Key 和聊天记录都存在本机 Chromium 存储里，不经过任何第三方服务器
 - 🎙 语音输入可用（内置服务给了正常的 http origin，麦克风权限是安全上下文下的）
 - 🌗 跟随系统深浅色
@@ -32,7 +35,7 @@ chat-demo 本身是一个纯静态的 React 应用，浏览器里直连 `https:/
 
 从 [Releases](../../releases) 页面下载 `DeepSeek-Chat-Setup-x.y.z.exe`，双击安装。
 
-> 请注意版本号，原则上是一定要用最新的版本，以防止一些奇奇怪怪的bug，记得及时更新到最新版本
+> 仓库还没发布版本时，这个链接会是一个空页面——想自己编译就看下面的「从源码构建」。
 
 安装包**没有数字签名**，Windows SmartScreen 可能提示"已保护你的电脑"，点「更多信息 → 仍要运行」即可。
 
@@ -43,6 +46,33 @@ chat-demo 本身是一个纯静态的 React 应用，浏览器里直连 `https:/
 设置 → 应用 → DeepSeek Chat → 卸载。
 
 聊天记录在 `%APPDATA%\DeepSeek Chat`，卸载不会删除，需要彻底清干净请手动删掉这个目录。
+
+## Android 版
+
+同一个前端的 Android 封装：WebView + 内置一个只监听 `127.0.0.1` 的静态服务（和桌面版一个思路，为了拿到稳定 origin，`localStorage` / `IndexedDB` 才存得住）。
+
+从 [Releases](../../releases) 下载 `DeepSeek-Chat-x.y.z-android.apk`，拷到手机上安装，首次装需要在系统里允许「安装未知来源应用」。
+
+- 要求 Android 7.0（API 24）及以上
+- 只申请 `INTERNET` 一个权限
+- 自签名 APK，Play Protect 可能提示一次「未知来源」
+
+### 自己编译 Android 版
+
+需要 JDK 17、Android build-tools 34 和 platform 34。**不用 Gradle**，直接调 aapt2 / javac / d8 / zipalign / apksigner：
+
+```bash
+# 1. 前端产物 + 覆盖层 -> android/app/src/main/assets/web
+bash scripts/prepare-android-assets.sh
+
+# 2. 编译 + 对齐 + 签名（Windows）
+cd android && cmd //c build-apk.bat
+# 产物: release/DeepSeek-Chat-1.0.2-android.apk
+```
+
+`build-apk.bat` 默认使用同级的 `.tools/jdk/jdk-17` 和 `.tools/android-sdk`，也可以用环境变量 `JDK` / `SDK` 指到别处。首次运行会用 `keytool` 生成自签名密钥库 `.tools/keystore.jks`——**这个文件不要提交、不要外传**，后续升级包必须用同一个密钥库签名才能覆盖安装。
+
+> 踩过的坑：Windows 上 `aapt2 link -A assets` 会把 zip 条目写成 `assets/web\index.html`（反斜杠），Android 的 `AssetManager` 只认 `/`，装上去就是白屏。所以这里改成链接完之后由 `scripts/add-assets.ps1` 用 `ZipArchive` 重新写入 assets。
 
 ## 从源码构建
 
@@ -92,6 +122,14 @@ scripts/
   build-web.sh         # 构建官方前端到 repo/dist
   make-portable.ps1    # 组装便携版目录
   build-installer.ps1  # 编译安装包
+android/               # Android 外壳（无 Gradle）
+  app/src/main/AndroidManifest.xml
+  app/src/main/java/com/liumx/deepseekchat/
+    MainActivity.java  # WebView 容器
+    LocalServer.java   # 内置静态服务，从 assets/web 读文件
+  app/src/main/res/    # 图标、字符串、主题
+  build-apk.bat        # aapt2 -> javac -> d8 -> 对齐 -> apksigner
+scripts/add-assets.ps1 # 把 assets 以正斜杠条目写进 APK
 repo/                  # 官方 chat-demo 源码（MIT），构建时克隆，不提交
 docs/screenshot.png
 ```

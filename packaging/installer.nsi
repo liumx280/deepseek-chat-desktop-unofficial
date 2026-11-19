@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 ; DeepSeek Chat 安装包脚本 —— 用 NSIS 3 编译：
 ;   makensis packaging\installer.nsi
 ; 可用 /D 覆盖输出名与源目录，例如：
